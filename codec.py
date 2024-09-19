@@ -1,8 +1,10 @@
 import os
 import sys
 import argparse
+import numpy as np
 
 import torch
+from setuptools.sandbox import save_path
 
 from models import model_CTC
 from utils import path2torch, torch2img, psnr
@@ -31,10 +33,16 @@ def _enc(args, net):
 
 
 def _dec(args, net):
-    save_path_dec = os.path.join(args.save_path, "recon")
-    if not os.path.exists(save_path_dec): os.mkdir(save_path_dec)
-    dec_time, x_rec, bpp = net.reconstruct_ctc(args)
-    torch2img(x_rec).save(f"{save_path_dec}/q{args.recon_level:04d}.png")
+    if hasattr(args, 'bits_path'):
+        save_path_dec = args.save_path
+        if not os.path.exists(save_path_dec): os.mkdir(save_path_dec)
+        dec_time, x_rec, bpp = net.reconstruct_ctc(args)
+        torch2img(x_rec).save(f"{save_path_dec}/{os.path.basename(args.input_file)}")
+    else:
+        save_path_dec = os.path.join(args.save_path, "recon")
+        if not os.path.exists(save_path_dec): os.mkdir(save_path_dec)
+        dec_time, x_rec, bpp = net.reconstruct_ctc(args)
+        torch2img(x_rec).save(f"{save_path_dec}/q{args.recon_level:04d}.png")
 
     print(f"dec time: {dec_time:.3f}, bpp: {bpp:.5f}", end=" ")
 
@@ -43,8 +51,10 @@ def _dec(args, net):
         metric = psnr(x_in, x_rec)
         print(f", psnr: {metric:.4f}")
 
+    return bpp, metric
 
-def main(argv):
+
+def test(argv):
     args = parse_args(argv)
     args.device = "cuda" if args.cuda and torch.cuda.is_available() else "cpu"
 
@@ -64,4 +74,64 @@ def main(argv):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1:])
+    # test(sys.argv[1:])
+
+    args = parse_args(sys.argv[1:])
+    args.device = "cuda" if torch.cuda.is_available() else "cpu"
+    net = model_CTC(N=192).to(args.device)
+    ckpt = torch.load("ctc.pt")["state_dict"]
+    net.load_state_dict(ckpt)
+    net.update()
+
+    # qs = [1, 9, 17, 33, 65, 95, 129, 145, 160]
+    qs = [1, 17, 33, 65, 129, 160]
+    # qs = range(160, 0, -1)
+    bpps = [[] for _ in range(len(qs))]
+    psnrs = [[] for _ in range(len(qs))]
+    data_root = '/mnt/c/Users/Justus/PycharmProjects/compress_uqdm/torch_datasets/imagenet_png/data'
+    for img in os.listdir(data_root):
+    # for img in ['sample/sample.png']:
+        if img in ['1004.png']:
+            continue
+        args.input_file = data_root + '/' + img
+        args.bits_path = 'imagenetpng/bits/' + img[:-4]
+        args.save_path = 'imagenetpng/bits/' + img[:-4]
+        # args.input_file = img
+        # args.save_path = img[:-4]
+        if not os.path.exists(args.save_path):
+            os.mkdir(args.save_path)
+
+        if not os.path.exists(args.bits_path + '/bits/z.bin'):
+            _enc(args, net)
+        for q in range(len(qs)):
+            q_path = 'imagenetpng/q_%d' % qs[q]
+            if os.path.exists(q_path + '/' + img):
+                continue
+            elif not os.path.exists(q_path):
+                os.mkdir(q_path)
+            args.save_path = q_path
+            args.recon_level = qs[q]
+            bpp, psnr_ = _dec(args, net)
+            bpps[q] += [bpp]
+            psnrs[q] += [psnr_]
+
+    bpps = [np.mean(bpps[q]) for q in range(len(qs))]
+    psnrs = [np.mean(psnrs[q]) for q in range(len(qs))]
+    np.savez_compressed('cdc.npz', psnrs=psnrs, bpps=bpps)
+
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots()
+    ax.plot(bpps, psnrs)
+    ax.set(xlabel='bpp', ylabel='psnr', title='bpp vs psnr')
+    ax.grid()
+    fig.savefig("bpp_vs_psnr.png")
+    plt.show()
+
+    # fig, ax = plt.subplots()
+    # ax.plot(bpps[:3], fids[:3])
+    # ax.plot(bpps[3:], fids[3:])
+    # ax.set(xlabel='bpp', ylabel='fid', title='bpp vs fid')
+    # ax.grid()
+    # fig.savefig("../results/bpp_vs_fid.png")
+    # plt.show()

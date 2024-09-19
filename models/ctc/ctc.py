@@ -344,7 +344,10 @@ class model_CTC(model_baseline):
         return enc_time
 
     def reconstruct_ctc(self, args):
-        bit_path = os.path.join(args.save_path, "bits")
+        try:
+            bit_path = os.path.join(args.bits_path, "bits")
+        except:
+            bit_path = os.path.join(args.save_path, "bits")
         y_strings_list = listfulldir(bit_path)
 
         for y_string in y_strings_list:
