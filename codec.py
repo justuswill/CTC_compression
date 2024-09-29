@@ -4,7 +4,7 @@ import argparse
 import numpy as np
 
 import torch
-from setuptools.sandbox import save_path
+# from setuptools.sandbox import save_path
 
 from models import model_CTC
 from utils import path2torch, torch2img, psnr
@@ -20,6 +20,7 @@ def parse_args(argv):
     parser.add_argument("--input-file", type=str, default=None)
     parser.add_argument("--recon-level", type=int, choices=list(range(1, 161)), default=160)
     parser.add_argument("--cuda", action="store_true", default=False)
+    parser.add_argument("--chunk_id", type=int, default=-1)
 
     args = parser.parse_args(argv)
     return args
@@ -88,32 +89,41 @@ if __name__ == "__main__":
     # qs = range(160, 0, -1)
     bpps = [[] for _ in range(len(qs))]
     psnrs = [[] for _ in range(len(qs))]
-    data_root = '/mnt/c/Users/Justus/PycharmProjects/compress_uqdm/torch_datasets/imagenet_png/data'
-    for img in os.listdir(data_root):
+    # data_root = '/mnt/c/Users/Justus/PycharmProjects/compress_uqdm/torch_datasets/imagenet_png/data'
+    data_root = '/home/jcwill/PycharmProjects/compress_uqdm/torch_datasets/imagenet_png/data'
+    img_idxs = sorted([int(f.split('.')[0]) for f in os.listdir(data_root)])
+    for img in img_idxs[10*args.chunk_id:10*(args.chunk_id+1)] if args.chunk_id >= 0 else img_idxs:
     # for img in ['sample/sample.png']:
-        if img in ['1004.png']:
-            continue
-        args.input_file = data_root + '/' + img
-        args.bits_path = 'imagenetpng/bits/' + img[:-4]
-        args.save_path = 'imagenetpng/bits/' + img[:-4]
-        # args.input_file = img
-        # args.save_path = img[:-4]
-        if not os.path.exists(args.save_path):
-            os.mkdir(args.save_path)
-
-        if not os.path.exists(args.bits_path + '/bits/z.bin'):
-            _enc(args, net)
-        for q in range(len(qs)):
-            q_path = 'imagenetpng/q_%d' % qs[q]
-            if os.path.exists(q_path + '/' + img):
+        print(img)
+        try:
+            # blacklist = [226, 1004, 1094, 1101, 1431, 1460, 1912, 2110, 2258, 2765, 3075, 3384, 3507, 3930]
+            # 32, 365
+            blacklist = []
+            if img in blacklist:
                 continue
-            elif not os.path.exists(q_path):
-                os.mkdir(q_path)
-            args.save_path = q_path
-            args.recon_level = qs[q]
-            bpp, psnr_ = _dec(args, net)
-            bpps[q] += [bpp]
-            psnrs[q] += [psnr_]
+            args.input_file = data_root + '/%s.png' % img
+            args.bits_path = 'imagenetpng/bits/%s' % img
+            args.save_path = 'imagenetpng/bits/%s' % img
+            # args.input_file = img
+            # args.save_path = img[:-4]
+            if not os.path.exists(args.save_path):
+                os.mkdir(args.save_path)
+
+            if not os.path.exists(args.bits_path + '/bits/z.bin'):
+                _enc(args, net)
+            for q in range(len(qs)):
+                q_path = 'imagenetpng/q_%d' % qs[q]
+                if os.path.exists(q_path + '/%s.png' % img):
+                    continue
+                elif not os.path.exists(q_path):
+                    os.mkdir(q_path)
+                args.save_path = q_path
+                args.recon_level = qs[q]
+                bpp, psnr_ = _dec(args, net)
+                bpps[q] += [bpp]
+                psnrs[q] += [psnr_]
+        except Exception as e:
+            print('Error on image %s: \n %s' % (img, e))
 
     bpps = [np.mean(bpps[q]) for q in range(len(qs))]
     psnrs = [np.mean(psnrs[q]) for q in range(len(qs))]
@@ -135,3 +145,6 @@ if __name__ == "__main__":
     # ax.grid()
     # fig.savefig("../results/bpp_vs_fid.png")
     # plt.show()
+
+    # srun --nodes=1 --ntasks=1 --mem=12G --time=3-00 --gres=gpu:1 -p ava_m.p -w "ava-m0" --pty /bin/bash --login
+    # for i in {501..1000}; do /home/jcwill/miniconda/envs/UQDM-local/bin/python codec.py --chunk_id ${i}; done
